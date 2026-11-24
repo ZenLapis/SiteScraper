@@ -34,6 +34,9 @@ def save_settings(data):
         pass
 
 
+APP_TITLE = "SiteScraper"
+
+
 class Api:
     def __init__(self):
         self._window = None
@@ -92,6 +95,7 @@ class Api:
                 finally:
                     self.running = False
                     self._emit("done", {"stopped": self.stop_event.is_set(), "count": len(self.records), "unit": "facilities"})
+                    notify(self._window, "Download finished", f"{len(self.records):,} facilities collected.")
             threading.Thread(target=tga_job, daemon=True).start()
             return {"ok": True, "url": options.start_url, "max": 1, "dataset": True}
 
@@ -104,6 +108,7 @@ class Api:
             finally:
                 self.running = False
                 self._emit("done", {"stopped": self.stop_event.is_set(), "count": len(self.records)})
+                notify(self._window, "Crawl finished", f"{len(self.records)} pages collected.")
 
         threading.Thread(target=job, daemon=True).start()
         return {"ok": True, "url": options.start_url, "max": options.max_pages}
@@ -147,7 +152,46 @@ class Api:
             os.startfile(url)
 
 
+def notify(window, title, text, ok=True):
+    """Finish sound plus a Windows notification, so a long job can run in the background."""
+    try:
+        import winsound
+        winsound.PlaySound("SystemAsterisk" if ok else "SystemHand",
+                           winsound.SND_ALIAS | winsound.SND_ASYNC)
+    except Exception:
+        pass
+    try:
+        import clr  # noqa: F401
+        from System import Action
+        from System.Drawing import Icon
+        from System.Windows.Forms import NotifyIcon, ToolTipIcon
+
+        def show():
+            tray = NotifyIcon()
+            tray.Icon = Icon(str(RESOURCE_DIR / "ui" / "app.ico"))
+            tray.Text = APP_TITLE
+            tray.Visible = True
+            tray.ShowBalloonTip(6000, title, text, ToolTipIcon.Info if ok else ToolTipIcon.Warning)
+            threading.Timer(12, lambda: window.native.Invoke(Action(tray.Dispose))).start()
+
+        window.native.Invoke(Action(show))
+    except Exception:
+        pass
+
+
+def set_window_icon(window):
+    try:
+        import clr  # noqa: F401  (pythonnet, loaded by pywebview)
+        from System import Action
+        from System.Drawing import Icon
+        icon = Icon(str(RESOURCE_DIR / "ui" / "app.ico"))
+        window.native.Invoke(Action(lambda: setattr(window.native, "Icon", icon)))
+    except Exception:
+        pass
+
+
 def style_titlebar(window):
+    set_window_icon(window)
     try:
         hwnd = window.native.Handle.ToInt32()
         dwm = ctypes.windll.dwmapi
@@ -158,6 +202,10 @@ def style_titlebar(window):
 
 
 def main():
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ZenLapis.SiteScraper")
+    except Exception:
+        pass
     api = Api()
     geo = api.settings.get("window", {})
     window = webview.create_window("SiteScraper", url=UI_FILE.as_uri(), js_api=api,
